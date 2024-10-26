@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import io
 import graphviz
-import numpy as np
 
 # Passo 1: Interface para upload de arquivo
 st.title("Análise de Random Forest")
@@ -25,18 +24,18 @@ if uploaded_file is not None:
         # Remover aspas do conteúdo
         content = content.replace('"', '')
 
-        # Usar StringIO para passar o conteúdo para pandas
-        # Primeiro, tente com o delimitador ';'
-        data = pd.read_csv(io.StringIO(content), sep=';', engine='python')
+        # Tentar detectar o delimitador
+        if content.count(';') > content.count(','):
+            sep = ';'
+        else:
+            sep = ','
 
-        # Se não conseguir ler, tente com ',' como delimitador
-        if data.empty:
-            st.warning("Tentando ler o arquivo com delimitador ','...")
-            data = pd.read_csv(io.StringIO(content), sep=',', engine='python')
+        # Usar StringIO para passar o conteúdo para pandas
+        data = pd.read_csv(io.StringIO(content), sep=sep, engine='python')
 
         # Verifique se o DataFrame foi preenchido corretamente
         if data.empty:
-            st.error("Não foi possível ler o arquivo CSV com nenhum dos delimitadores.")
+            st.error("Não foi possível ler o arquivo CSV.")
         else:
             # Remover espaços em branco das colunas
             data.columns = data.columns.str.strip()
@@ -44,9 +43,6 @@ if uploaded_file is not None:
             # Exibir os dados e seus tipos
             st.write("Primeiras linhas do arquivo:")
             st.write(data.head())
-
-            # Limpar valores nulos ou vazios
-            data = data.dropna()
 
             # Passo 3: Seleção de features e target
             st.subheader("Selecione as Features e o Target")
@@ -75,14 +71,15 @@ if uploaded_file is not None:
                 min_samples_split = st.sidebar.slider("Mínimo de Amostras para Dividir (min_samples_split)", min_value=2, max_value=20, value=2)
                 max_leaf_nodes = st.sidebar.slider("Máximo de Folhas (max_leaf_nodes)", min_value=2, max_value=100, value=20)
                 min_samples_leaf = st.sidebar.slider("Mínimo de Amostras em uma Folha (min_samples_leaf)", min_value=1, max_value=20, value=1)
-                
+
                 # Ajustar test_size e random_state
-                test_size = st.sidebar.slider("Proporção do Conjunto de Teste", 0.1, 0.9, 0.3, 0.05)
+                test_size = st.sidebar.slider("Proporção do Conjunto de Teste", 0.1, 0.9, 0.2, 0.05)
                 random_state = st.sidebar.number_input("Valor de Random State", min_value=0, value=42, step=1)
+                train_size = 1 - test_size  # Calcular train_size como 1 - test_size
 
                 # Passo 4: Treinamento do modelo
                 features = data[features_columns]
-                target = data[target_column]
+                target = data[target_column].astype(str)  # Converter para string
 
                 # Verificação para evitar erros na divisão dos dados
                 if features.empty or target.empty:
@@ -92,74 +89,72 @@ if uploaded_file is not None:
                     le = LabelEncoder()
                     target = le.fit_transform(target)
 
-                    # Limpeza de valores nulos nas features e no target
-                    features = features.replace([np.inf, -np.inf], np.nan)  # Substitui infinidades por NaN
-                    features = features.dropna()  # Remove qualquer linha que tenha NaN
-                    target = target[:len(features)]  # Alinha o target
+                    # Convertendo as features para numéricas
+                    features = features.apply(pd.to_numeric, errors='coerce')
 
-                    # Verificação se ainda temos dados após a limpeza
-                    if len(features) != len(target):
-                        st.error("As features e a coluna alvo têm tamanhos inconsistentes após a limpeza. Verifique sua seleção.")
-                    else:
-                        # Divisão dos dados
-                        X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=test_size, random_state=random_state)
-                        
-                        # Treinamento do modelo
-                        model = RandomForestClassifier(
-                            n_estimators=n_estimators,
-                            max_depth=max_depth,
-                            min_samples_split=min_samples_split,
-                            max_leaf_nodes=max_leaf_nodes,
-                            min_samples_leaf=min_samples_leaf,
-                            random_state=random_state
-                        )
-                        model.fit(X_train, y_train)
-                        predictions = model.predict(X_test)
+                    # Tratar valores infinitos e muito grandes
+                    features.replace([float('inf'), float('-inf')], pd.NA, inplace=True)  # Substitui infinitos por NaN
+                    features = features.fillna(features.mean())  # Substitui NaN pela média das colunas
 
-                        # Passo 5: Exibição dos resultados
-                        st.subheader("Resultados da Classificação")
+                    # Divisão dos dados
+                    X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=test_size, train_size=train_size, random_state=random_state)
 
-                        # Botões para visualizar resultados
-                        if st.button("Mostrar Relatório de Classificação"):
-                            st.subheader("Relatório de Classificação")
-                            st.text(classification_report(y_test, predictions))
+                    # Treinamento do modelo
+                    model = RandomForestClassifier(
+                        n_estimators=n_estimators,
+                        max_depth=max_depth,
+                        min_samples_split=min_samples_split,
+                        max_leaf_nodes=max_leaf_nodes,
+                        min_samples_leaf=min_samples_leaf,
+                        random_state=random_state
+                    )
+                    model.fit(X_train, y_train)
+                    predictions = model.predict(X_test)
 
-                        if st.button("Mostrar Matriz de Confusão"):
-                            st.subheader("Matriz de Confusão")
-                            cm = confusion_matrix(y_test, predictions)
-                            fig, ax = plt.subplots()
-                            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-                            st.pyplot(fig)
+                    # Passo 5: Exibição dos resultados
+                    st.subheader("Resultados da Classificação")
 
-                        if st.button("Mostrar Importância das Variáveis"):
-                            st.subheader("Importância das Variáveis")
-                            feature_importance = model.feature_importances_
-                            feature_df = pd.DataFrame({
-                                "Feature": features_columns,
-                                "Importance": feature_importance
-                            }).sort_values(by="Importance", ascending=False)
+                    # Botões para visualizar resultados
+                    if st.button("Mostrar Relatório de Classificação"):
+                        st.subheader("Relatório de Classificação")
+                        st.text(classification_report(y_test, predictions))
 
-                            # Gráfico de importância das variáveis
-                            fig2, ax2 = plt.subplots()
-                            sns.barplot(x="Importance", y="Feature", data=feature_df, ax=ax2)
-                            st.pyplot(fig2)
+                    if st.button("Mostrar Matriz de Confusão"):
+                        st.subheader("Matriz de Confusão")
+                        cm = confusion_matrix(y_test, predictions)
+                        fig, ax = plt.subplots()
+                        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+                        st.pyplot(fig)
 
-                            st.write("Tabela de Importância das Variáveis:")
-                            st.write(feature_df)
+                    if st.button("Mostrar Importância das Variáveis"):
+                        st.subheader("Importância das Variáveis")
+                        feature_importance = model.feature_importances_
+                        feature_df = pd.DataFrame({
+                            "Feature": features_columns,
+                            "Importance": feature_importance
+                        }).sort_values(by="Importance", ascending=False)
 
-                        # Exibir uma árvore do Random Forest
-                        st.subheader("Visualização de uma Árvore do Random Forest")
-                        # Selecionar a primeira árvore do modelo
-                        estimator = model.estimators_[0]
-                        
-                        # Exportar a árvore
-                        dot_data = export_graphviz(estimator, out_file=None, 
-                                                    feature_names=features_columns,
-                                                    class_names=le.classes_,
-                                                    filled=True, rounded=True, 
-                                                    special_characters=True)  
-                        graph = graphviz.Source(dot_data)  
-                        st.graphviz_chart(graph)
+                        # Gráfico de importância das variáveis
+                        fig2, ax2 = plt.subplots()
+                        sns.barplot(x="Importance", y="Feature", data=feature_df, ax=ax2)
+                        st.pyplot(fig2)
+
+                        st.write("Tabela de Importância das Variáveis:")
+                        st.write(feature_df)
+
+                    # Exibir uma árvore do Random Forest
+                    st.subheader("Visualização de Árvore")
+                    # Selecionar a primeira árvore do modelo
+                    estimator = model.estimators_[0]
+                    
+                    # Exportar a árvore
+                    dot_data = export_graphviz(estimator, out_file=None, 
+                                                feature_names=features_columns,
+                                                class_names=[str(cls) for cls in le.classes_],  # Converter para string
+                                                filled=True, rounded=True, 
+                                                special_characters=True)  
+                    graph = graphviz.Source(dot_data)  
+                    st.graphviz_chart(graph)
 
     except Exception as e:
         st.error(f"Erro ao processar o arquivo: {e}")
